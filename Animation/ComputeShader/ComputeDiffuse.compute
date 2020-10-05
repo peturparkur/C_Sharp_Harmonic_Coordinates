@@ -1,0 +1,83 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+#pragma kernel RandomNoise
+#pragma kernel CopyTexture
+#pragma kernel Fade
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+//uniform SamplerState smp_point_clamp_sampler; //previous result for stepping
+RWTexture2D<float4> Result; //uniform prefix so that it keeps it in memory
+RWTexture2D<float4> input; //input texture that we can sample
+uniform int2 dim; //the dimensions of the image
+#define GroupSizeX 8
+#define GroupSizeY 8
+
+// Hash function from H. Schechter & R. Bridson, goo.gl/RXiKaH
+uint Hash(uint s)
+{
+	s ^= 2747636419u;
+	s *= 2654435769u;
+	s ^= s >> 16;
+	s *= 2654435769u;
+	s ^= s >> 16;
+	s *= 2654435769u;
+	return s;
+}
+
+float Random(uint seed)
+{
+	return float(Hash(seed)) / 4294967295.0; // 2^32-1
+}
+
+[numthreads(GroupSizeX,GroupSizeY,1)]
+void CSMain (uint3 id : SV_DispatchThreadID, uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) //groupID = dispatch id, groupthreadID = currentgroup id
+{
+    // TODO: insert actual code here!
+
+    //Result[id.xy] = float4(id.x & id.y, (id.x & 15)/15.0, (id.y & 15)/15.0, 0.0);
+	//float f = (float)id.xy;
+	//Result[id.xy] = float4(f/1024.0, (float)id.x/1024.0, (float)id.y / 1024.0, 1.0);//float4(id.x*id.y/(256.0*256.0), 0.0, 0.0, 1.0); //float4(r,g,b,a)
+
+	//we want to find the 4 neighbours
+	uint xM = clamp(id.x + 1, 0, (uint)dim.x); //y values clamped at border upper
+	uint xm = clamp(id.x - 1, 0, (uint)dim.x); //y values clamped at border lower
+
+	uint yM = clamp(id.y + 1, 0, (uint)dim.y); //y values clamped at border upper
+	uint ym = clamp(id.y - 1, 0, (uint)dim.y); //y values clamped at border lower
+
+	//uint2 up = uint2(xM, id.y);
+
+	float sum = input[uint2(xM, id.y)].r * (float)(xM == (uint)dim.x) + input[uint2(xm, id.y)].r * (float)(xm == 0) +
+				input[uint2(id.x, yM)].r * (float)(yM == (uint)dim.y) + input[uint2(id.x, ym)].r * (float)(ym == 0) + 
+				input[uint2(id.x,id.y)].r;
+
+	uint count = (uint)((xM == (uint)dim.x)) + (uint)((xm == (uint)dim.x)) + (uint)(yM == (uint)dim.y) + (uint)(ym == (uint)dim.y) + 1;
+
+	float average = sum / (float)count;
+	Result[id.xy] = float4(average, 0, 0, 1.0);
+}
+
+[numthreads(GroupSizeX, GroupSizeY, 1)]
+void Fade(uint3 id : SV_DispatchThreadID, uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) //groupID = dispatch id, groupthreadID = currentgroup id
+{
+	Result[id.xy] = float4((input[uint2(id.x, id.y-1)].r + input[uint2(id.x, id.y + 1)].r + input[uint2(id.x, id.y)].r) / 3.0,
+		0, 
+		(abs(Result[id.xy].r-(input[uint2(id.x, id.y - 1)].r + input[uint2(id.x, id.y + 1)].r + input[uint2(id.x, id.y)].r) / 3.0))*300.0, 1.0);
+
+}
+
+[numthreads(GroupSizeX, GroupSizeY, 1)]
+void CopyTexture(uint3 id : SV_DispatchThreadID)
+{
+	input[id.xy] = Result[id.xy];
+}
+
+[numthreads(GroupSizeX, GroupSizeY, 1)]
+void RandomNoise(uint3 id : SV_DispatchThreadID)
+{
+	uint2 udim = (uint2)dim;
+	uint w, h;
+	Result.GetDimensions(w, h); //returns the width and heigth of the result texture
+	input[uint2(id.x, id.y*(uint)((id.y%(2) == 0)))] = float4(1.0, 0, 0, 1.0);//float4(Random(id.x + id.y * w), 0, 0, 1.0);
+}
